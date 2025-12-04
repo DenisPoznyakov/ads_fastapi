@@ -1,43 +1,54 @@
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update, delete
-from app import models
+from sqlalchemy import and_
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.models import Advertisement
+from app.schemas import AdCreate, AdUpdate
 
-# Создание объявления
-async def create_ad(session: AsyncSession, ad_data: dict):
-    ad = models.Ad(**ad_data)
+async def create_ad(session: AsyncSession, ad: AdCreate) -> Advertisement:
+    new_ad = Advertisement(**ad.model_dump())
+    session.add(new_ad)
+    await session.commit()
+    await session.refresh(new_ad)
+    return new_ad
+
+async def get_ad(session: AsyncSession, ad_id: int) -> Advertisement | None:
+    result = await session.execute(select(Advertisement).where(Advertisement.id == ad_id))
+    return result.scalars().first()
+
+async def update_ad(session: AsyncSession, ad_id: int, ad_update: AdUpdate) -> Advertisement | None:
+    ad = await get_ad(session, ad_id)
+    if not ad:
+        return None
+    for key, value in ad_update.model_dump(exclude_unset=True).items():
+        setattr(ad, key, value)
     session.add(ad)
     await session.commit()
     await session.refresh(ad)
     return ad
 
-# Получение объявления по id
-async def get_ad(session: AsyncSession, ad_id: int):
-    return await session.get(models.Ad, ad_id)
-
-# Получение списка объявлений с лимитом и оффсетом
-async def list_ads(session: AsyncSession, limit: int = 50, offset: int = 0):
-    result = await session.execute(select(models.Ad).limit(limit).offset(offset))
-    return result.scalars().all()
-
-# Обновление объявления
-async def update_ad(session: AsyncSession, ad_id: int, ad_data: dict):
-    ad = await session.get(models.Ad, ad_id)
+async def delete_ad(session: AsyncSession, ad_id: int) -> bool:
+    ad = await get_ad(session, ad_id)
     if not ad:
-        return None
-    for key, value in ad_data.items():
-        if hasattr(ad, key):
-            setattr(ad, key, value)
-    session.add(ad)
-    await session.commit()
-    await session.refresh(ad)
-    return ad
-
-# Удаление объявления
-async def delete_ad(session: AsyncSession, ad_id: int):
-    ad = await session.get(models.Ad, ad_id)
-    if not ad:
-        return None
+        return False
     await session.delete(ad)
     await session.commit()
-    return ad
+    return True
+
+async def search_ads(session: AsyncSession, title: str | None = None, description: str | None = None,
+                     owner: str | None = None, price_min: float | None = None, price_max: float | None = None):
+    query = select(Advertisement)
+    filters = []
+    if title:
+        filters.append(Advertisement.title.ilike(f"%{title}%"))
+    if description:
+        filters.append(Advertisement.description.ilike(f"%{description}%"))
+    if owner:
+        filters.append(Advertisement.owner == owner)
+    if price_min is not None:
+        filters.append(Advertisement.price >= price_min)
+    if price_max is not None:
+        filters.append(Advertisement.price <= price_max)
+    if filters:
+        query = query.where(and_(*filters))
+    result = await session.execute(query)
+    return result.scalars().all()

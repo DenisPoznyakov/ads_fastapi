@@ -1,9 +1,9 @@
 import asyncio
-from app import models, database
+from app.database import init_db
 
-async def init_db():
-    async with database.engine.begin() as conn:
-        await conn.run_sync(models.Base.metadata.create_all)
-    print("Tables created")
+async def main():
+    await init_db()
+    print("Database initialized!")
 
-asyncio.run(init_db())
+if __name__ == "__main__":
+    asyncio.run(main())

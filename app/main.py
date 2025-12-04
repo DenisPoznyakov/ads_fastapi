@@ -1,66 +1,92 @@
-from fastapi import FastAPI, HTTPException, Query
-from typing import List, Optional
-from app import models, schemas, crud, database
-import asyncio
+from fastapi import FastAPI, HTTPException, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import List
 
-# Создаем базу, если еще не создана
-async def init_db():
-    async with database.engine.begin() as conn:
-        # Импортируем модели и создаем таблицы
-        await conn.run_sync(models.Base.metadata.create_all)
+from app.database import async_session, init_db
+from app.schemas import AdCreate, AdUpdate, AdResponse
+from app import crud
 
-# Создаем приложение
-app = FastAPI(title="Ads API")
 
-# Роуты
+app = FastAPI(
+    title="Advertisements API",
+    description="Простое API для объявлений (учебный проект Netology)",
+    version="1.0.0"
+)
+
+
 @app.on_event("startup")
-async def on_startup():
-    # Инициализация БД при старте
+async def startup_event() -> None:
+    """Выполняется один раз при старте приложения"""
+    print("Запуск приложения... Ожидание подключения к базе данных")
     await init_db()
-    print("Database initialized")
+    print("Приложение успешно запущено и готово к работе!")
 
-# Создание объявления
-@app.post("/advertisement", response_model=schemas.AdSchema)
-async def create_ad_endpoint(ad: schemas.AdCreate):
-    async with database.AsyncSessionLocal() as session:
-        return await crud.create_ad(session, ad.dict())
 
-# Получение объявления по id
-@app.get("/advertisement/{ad_id}", response_model=schemas.AdSchema)
-async def get_ad_endpoint(ad_id: int):
-    async with database.AsyncSessionLocal() as session:
-        ad = await crud.get_ad(session, ad_id)
-        if not ad:
-            raise HTTPException(status_code=404, detail="Ad not found")
-        return ad
+async def get_session() -> AsyncSession:
+    async with async_session() as session:
+        yield session
 
-# Получение списка объявлений с фильтром по автору и лимитом
-@app.get("/advertisement", response_model=List[schemas.AdSchema])
-async def list_ads_endpoint(
-    limit: int = Query(50, ge=1),
-    offset: int = Query(0, ge=0),
-    owner: Optional[str] = None
+
+# ──────────────────────────────────────────────────────────────
+# Эндпоинты
+# ──────────────────────────────────────────────────────────────
+
+@app.post("/advertisement", response_model=AdResponse, status_code=201)
+async def create_ad(ad: AdCreate, session: AsyncSession = Depends(get_session)):
+    return await crud.create_ad(session=session, ad_in=ad)
+
+
+@app.get("/advertisement/{ad_id}", response_model=AdResponse)
+async def get_ad(ad_id: int, session: AsyncSession = Depends(get_session)):
+    ad = await crud.get_ad(session=session, ad_id=ad_id)
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+    return ad
+
+
+@app.patch("/advertisement/{ad_id}", response_model=AdResponse)
+async def update_ad(
+    ad_id: int,
+    ad_update: AdUpdate,
+    session: AsyncSession = Depends(get_session)
 ):
-    async with database.AsyncSessionLocal() as session:
-        ads = await crud.list_ads(session, limit=limit, offset=offset)
-        if owner:
-            ads = [ad for ad in ads if ad.owner == owner]
-        return ads
+    ad = await crud.update_ad(session=session, ad_id=ad_id, ad_in=ad_update)
+    if not ad:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+    return ad
 
-# Обновление объявления
-@app.patch("/advertisement/{ad_id}", response_model=schemas.AdSchema)
-async def update_ad_endpoint(ad_id: int, ad: schemas.AdCreate):
-    async with database.AsyncSessionLocal() as session:
-        updated_ad = await crud.update_ad(session, ad_id, ad.dict(exclude_unset=True))
-        if not updated_ad:
-            raise HTTPException(status_code=404, detail="Ad not found")
-        return updated_ad
 
-# Удаление объявления
-@app.delete("/advertisement/{ad_id}")
-async def delete_ad_endpoint(ad_id: int):
-    async with database.AsyncSessionLocal() as session:
-        deleted_ad = await crud.delete_ad(session, ad_id)
-        if not deleted_ad:
-            raise HTTPException(status_code=404, detail="Ad not found")
-        return {"status": "deleted"}
+@app.delete("/advertisement/{ad_id}", status_code=200)
+async def delete_ad(ad_id: int, session: AsyncSession = Depends(get_session)):
+    success = await crud.delete_ad(session=session, ad_id=ad_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Advertisement not found")
+    return {"message": "Advertisement successfully deleted"}
+
+
+@app.get("/advertisement", response_model=List[AdResponse])
+async def search_ads(
+    title: str | None = Query(None, description="Поиск по заголовку (частичное совпадение)"),
+    description: str | None = Query(None, description="Поиск по описанию"),
+    owner: str | None = Query(None, description="Фильтр по владельцу"),
+    price_min: float | None = Query(None, ge=0, description="Минимальная цена"),
+    price_max: float | None = Query(None, ge=0, description="Максимальная цена"),
+    session: AsyncSession = Depends(get_session),
+):
+    return await crud.search_ads(
+        session=session,
+        title=title,
+        description=description,
+        owner=owner,
+        price_min=price_min,
+        price_max=price_max,
+    )
+
+
+@app.get("/")
+async def root():
+    return {
+        "message": "Advertisements API работает!",
+        "docs": "/docs",
+        "redoc": "/redoc"
+    }

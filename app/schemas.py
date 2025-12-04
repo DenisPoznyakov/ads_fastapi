@@ -1,22 +1,25 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
-from typing import Optional
 
-# Схема для создания объявления (в теле запроса)
-class AdCreate(BaseModel):
+class AdBase(BaseModel):
     title: str
-    description: Optional[str] = None
-    price: float
+    description: str
+    price: float = Field(..., ge=0)
     owner: str
 
-# Схема для ответа (API возвращает это)
-class AdSchema(BaseModel):
+class AdCreate(AdBase):
+    pass
+
+class AdUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    price: float | None = Field(None, ge=0)
+    owner: str | None = None
+
+class AdResponse(AdBase):
     id: int
-    title: str
-    description: Optional[str] = None
-    price: float
-    owner: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True  # Для совместимости с SQLAlchemy
+    model_config = {
+        "from_attributes": True
+    }
